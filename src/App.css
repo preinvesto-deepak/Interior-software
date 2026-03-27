@@ -1,0 +1,127 @@
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  background-color: #f3f4f6;
+}
+
+.sidebar {
+  width: 260px;
+  background: #111827;
+  color: white;
+  padding: 24px 18px;
+}
+
+.logo {
+  font-size: 22px;
+  font-weight: bold;
+  margin-bottom: 24px;
+}
+
+.sidebar ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sidebar li {
+  margin-bottom: 10px;
+}
+
+.sidebar a {
+  display: block;
+  color: #e5e7eb;
+  text-decoration: none;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.sidebar a:hover {
+  background: #1f2937;
+  color: #ffffff;
+}
+
+.main-content {
+  flex: 1;
+  padding: 24px;
+}
+
+.page-card {
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+input,
+select,
+button {
+  font-size: 14px;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+input,
+select {
+  border: 1px solid #cbd5e1;
+  width: 100%;
+}
+
+button {
+  border: none;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #1d4ed8;
+}
+
+table {
+  background: white;
+  border-collapse: collapse;
+}
+
+th {
+  background: #f9fafb;
+}
+@media print {
+  .sidebar,
+  .no-print {
+    display: none !important;
+  }
+
+  .main-content {
+    padding: 0;
+    background: white;
+  }
+
+  .page-card {
+    border: none;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .quotation-print-area {
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 20px !important;
+  }
+
+  body {
+    background: white !important;
+  }
+}
+.sidebar a.active {
+  background: #2563eb;
+  color: white;
+}
+
+.page-header {
+  margin-bottom: 20px;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 28px;
+}
