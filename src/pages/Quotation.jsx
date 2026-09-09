@@ -1,17 +1,27 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAppData } from "../context/AppDataContext";
-import { mmToFeet, sqMmToSqFt, roundTo2 } from "../utils/unitConversions";
+import { mmToFeet, sqMmToSqFt, roundTo2, formatCurrency } from "../utils/unitConversions";
+import { computeSheetCounts } from "../utils/binPack";
 
 function Quotation() {
-  const { generatedParts, configuredWardrobe, prices } = useAppData();
+  const { wardrobeRecords, prices, materialStockSettings } = useAppData();
+  const [searchParams] = useSearchParams();
 
-  const STANDARD_SHEET_LENGTH = 2400;
-  const STANDARD_SHEET_WIDTH = 1200;
+  const initialId = (() => {
+    const p = searchParams.get("record");
+    if (p) {
+      const id = Number(p);
+      if (wardrobeRecords.find((r) => r.id === id)) return id;
+    }
+    return wardrobeRecords[0]?.id ?? null;
+  })();
 
+  const [selectedRecordId, setSelectedRecordId] = useState(initialId);
   const [sheetLength, setSheetLength] = useState(2440);
   const [sheetWidth, setSheetWidth] = useState(1220);
 
-  const [customerName, setCustomerName] = useState("Ramesh");
+  const [customerName, setCustomerName] = useState("");
   const [customerMobile, setCustomerMobile] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
 
@@ -20,11 +30,11 @@ function Quotation() {
   const [companyEmail, setCompanyEmail] = useState("");
 
   const [quotationNo, setQuotationNo] = useState("QTN-001");
-  const [quotationDate, setQuotationDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [quotationDate, setQuotationDate] = useState(new Date().toISOString().split("T")[0]);
 
+  const [markupPercent, setMarkupPercent] = useState(0);
   const [discountAmount, setDiscountAmount] = useState(0);
+  const [gstPercent, setGstPercent] = useState(18);
 
   const [validityDays, setValidityDays] = useState(7);
   const [advancePercent, setAdvancePercent] = useState(50);
@@ -39,392 +49,218 @@ function Quotation() {
     "Final measurements to be confirmed at site before execution."
   );
 
-  if (generatedParts.length === 0 || !configuredWardrobe) {
+  const record = useMemo(() => {
+    if (selectedRecordId == null) return wardrobeRecords[0] || null;
+    return wardrobeRecords.find((r) => r.id === selectedRecordId) || null;
+  }, [wardrobeRecords, selectedRecordId]);
+
+  if (!wardrobeRecords.length || !record) {
     return (
       <div className="page-card">
         <h2>Quotation</h2>
-        <p>
-          No generated wardrobe data available. Please save parts from Wardrobe
-          Configurator first.
-        </p>
+        <p>No wardrobe records found. Save a wardrobe from the Configurator first.</p>
       </div>
     );
   }
 
-  const hardwareItems = Array.isArray(configuredWardrobe.hardwareItems)
-    ? configuredWardrobe.hardwareItems
-    : [];
+  const generatedParts = record.parts || [];
 
+  const STANDARD_SHEET_LENGTH = 2400;
+  const STANDARD_SHEET_WIDTH = 1200;
+  const canFitInSheet = (l, w) =>
+    (l <= STANDARD_SHEET_LENGTH && w <= STANDARD_SHEET_WIDTH) ||
+    (l <= STANDARD_SHEET_WIDTH && w <= STANDARD_SHEET_LENGTH);
+
+  const invalidParts = generatedParts.filter((p) => !canFitInSheet(p.lengthMm, p.widthMm));
+
+  const hardwareItems = Array.isArray(record.hardwareItems) ? record.hardwareItems : [];
   const normalizedHardwareItems = hardwareItems
-    .map((item) => ({
-      ...item,
-      amount: Number(item.qty || 0) * Number(item.rate || 0),
-    }))
-    .filter(
-      (item) =>
-        String(item.itemName || "").trim() !== "" ||
-        Number(item.qty || 0) > 0 ||
-        Number(item.rate || 0) > 0
+    .map((item) => ({ ...item, amount: Number(item.qty || 0) * Number(item.rate || 0) }))
+    .filter((item) =>
+      String(item.itemName || "").trim() !== "" ||
+      Number(item.qty || 0) > 0 ||
+      Number(item.rate || 0) > 0
     );
 
   const hardwareAmount =
     normalizedHardwareItems.length > 0
       ? normalizedHardwareItems.reduce((sum, item) => sum + item.amount, 0)
-      : Number(configuredWardrobe.hardwareAmount || 0);
+      : Number(record.hardwareAmount || 0);
 
-  const canFitInSheet = (lengthMm, widthMm) => {
-    return (
-      (lengthMm <= STANDARD_SHEET_LENGTH &&
-        widthMm <= STANDARD_SHEET_WIDTH) ||
-      (lengthMm <= STANDARD_SHEET_WIDTH &&
-        widthMm <= STANDARD_SHEET_LENGTH)
-    );
+  // Actual sheet count from real nesting — honors per-material stock
+  // size/texture from the Cut Sheet Optimizer when set.
+  const getStockSize = (mat) => {
+    const s = materialStockSettings?.[mat];
+    return {
+      sheetW: s?.sheetW || Number(sheetLength),
+      sheetH: s?.sheetH || Number(sheetWidth),
+      sheetTexture: s?.sheetTexture ?? 1,
+    };
   };
-
-  const invalidParts = generatedParts.filter(
-    (part) => !canFitInSheet(part.lengthMm, part.widthMm)
-  );
-
-  if (invalidParts.length > 0) {
-    return (
-      <div className="page-card">
-        <h2>Quotation</h2>
-        <p><strong>Project:</strong> {configuredWardrobe.projectName}</p>
-        <p><strong>Sub Project:</strong> {configuredWardrobe.subProjectName}</p>
-        <p><strong>Item Name:</strong> {configuredWardrobe.itemName}</p>
-        <p><strong>Door Type:</strong> {configuredWardrobe.doorType || "-"}</p>
-        <p><strong>Specification:</strong> {configuredWardrobe.specification || "-"}</p>
-        <p><strong>Remarks:</strong> {configuredWardrobe.remarks || "-"}</p>
-
-        <div
-          style={{
-            marginTop: "20px",
-            padding: "14px",
-            border: "1px solid #dc2626",
-            background: "#fef2f2",
-            borderRadius: "10px",
-          }}
-        >
-          <p><strong>Quotation blocked:</strong> Some parts exceed standard sheet size 2400 x 1200 mm.</p>
-          {invalidParts.map((part) => (
-            <p key={part.id}>
-              {part.partName}: {part.lengthMm} x {part.widthMm} mm
-            </p>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const sheetArea = Number(sheetLength) * Number(sheetWidth);
+  const sheetCounts = computeSheetCounts(generatedParts, getStockSize);
 
   const materialGroups = generatedParts.reduce((acc, part) => {
     const key = part.material || "Unknown";
-    const partArea =
-      Number(part.lengthMm) * Number(part.widthMm) * Number(part.qty);
-
-    if (!acc[key]) {
-      acc[key] = {
-        material: key,
-        totalAreaSqMm: 0,
-      };
-    }
-
+    const partArea = Number(part.lengthMm) * Number(part.widthMm) * Number(part.qty);
+    if (!acc[key]) acc[key] = { material: key, totalAreaSqMm: 0 };
     acc[key].totalAreaSqMm += partArea;
     return acc;
   }, {});
 
   const groupedRows = Object.values(materialGroups).map((group) => {
-    const materialRateData = prices.find(
-      (item) => item.materialName === group.material
-    );
-
-    const requiredSheets =
-      sheetArea > 0 ? Math.ceil(group.totalAreaSqMm / sheetArea) : 0;
-
-    const sheetRate = materialRateData ? Number(materialRateData.rate) : 0;
-    const basicAmount = sheetRate * requiredSheets;
-
-    return {
-      material: group.material,
-      totalAreaSqMm: group.totalAreaSqMm,
-      requiredSheets,
-      sheetRate,
-      basicAmount,
-    };
+    const rateData = prices.find((p) => p.materialName === group.material);
+    const requiredSheets = sheetCounts[group.material] || 0;
+    const sheetRate = rateData ? Number(rateData.rate) : 0;
+    return { material: group.material, totalAreaSqMm: group.totalAreaSqMm, requiredSheets, sheetRate, basicAmount: sheetRate * requiredSheets };
   });
 
-  const woodAmount = groupedRows.reduce(
-    (total, row) => total + row.basicAmount,
-    0
-  );
-  const laminateAmount = Number(configuredWardrobe.laminateAmount || 0);
-  const edgeBandAmount = Number(configuredWardrobe.edgeBandAmount || 0);
-  const glueAmount = Number(configuredWardrobe.glueAmount || 0);
-  const drawerAmount = Number(configuredWardrobe.drawerAmount || 0);
-  const frontFrameAmount = Number(configuredWardrobe.frontFrameAmount || 0);
-  const laborAmount = Number(configuredWardrobe.laborAmount || 0);
-  const transportAmount = Number(configuredWardrobe.transportAmount || 0);
+  const woodAmount = groupedRows.reduce((t, r) => t + r.basicAmount, 0);
+  const laminateAmount = Number(record.laminateAmount || 0);
+  const edgeBandAmount = Number(record.edgeBandAmount || 0);
+  const glueAmount = Number(record.glueAmount || 0);
+  const drawerAmount = Number(record.drawerAmount || 0);
+  const frontFrameAmount = Number(record.frontFrameAmount || 0);
+  const laborAmount = Number(record.laborAmount || 0);
+  const transportAmount = Number(record.transportAmount || 0);
 
-  const subTotal =
-    woodAmount +
-    laminateAmount +
-    edgeBandAmount +
-    hardwareAmount +
-    glueAmount +
-    drawerAmount +
-    frontFrameAmount +
-    laborAmount +
-    transportAmount;
+  const costTotal =
+    woodAmount + laminateAmount + edgeBandAmount + hardwareAmount +
+    glueAmount + drawerAmount + frontFrameAmount + laborAmount + transportAmount;
 
-  const netAmount = subTotal - Number(discountAmount);
-  const gstPercent = 18;
-  const gstAmount = (netAmount * gstPercent) / 100;
+  const markupAmount = (costTotal * Number(markupPercent || 0)) / 100;
+  const subTotal = costTotal + markupAmount;
+  const netAmount = subTotal - Number(discountAmount || 0);
+  const gstAmount = (netAmount * Number(gstPercent || 0)) / 100;
   const grandTotal = netAmount + gstAmount;
-
-  const totalPanelArea = groupedRows.reduce(
-    (total, row) => total + row.totalAreaSqMm,
-    0
-  );
-
   const advanceAmount = (netAmount * Number(advancePercent || 0)) / 100;
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const totalPanelAreaSqMm = groupedRows.reduce((t, r) => t + r.totalAreaSqMm, 0);
+
+  const inputRow = { display: "grid", gridTemplateColumns: "160px 1fr", gap: 8, alignItems: "center", marginBottom: 8 };
+  const label = { fontWeight: 600, fontSize: 13 };
 
   return (
     <div className="page-card">
-      <div
-        className="no-print"
-        style={{
-          display: "grid",
-          gap: "10px",
-          maxWidth: "520px",
-          marginBottom: "20px",
-        }}
-      >
-        <input
-          type="text"
-          placeholder="Company Name"
-          value={companyName}
-          onChange={(e) => setCompanyName(e.target.value)}
-        />
+      <div className="no-print" style={{ marginBottom: 24 }}>
+        <h3 style={{ marginTop: 0 }}>Quotation Settings</h3>
 
-        <input
-          type="text"
-          placeholder="Company Mobile"
-          value={companyMobile}
-          onChange={(e) => setCompanyMobile(e.target.value)}
-        />
+        {invalidParts.length > 0 && (
+          <div style={{ padding: 12, border: "1px solid #dc2626", background: "#fef2f2", borderRadius: 8, marginBottom: 12 }}>
+            <strong>Warning:</strong> Some parts exceed standard sheet size. Reconfigure in Wardrobe Configurator.
+          </div>
+        )}
 
-        <input
-          type="text"
-          placeholder="Company Email"
-          value={companyEmail}
-          onChange={(e) => setCompanyEmail(e.target.value)}
-        />
-
-        <input
-          type="text"
-          placeholder="Quotation Number"
-          value={quotationNo}
-          onChange={(e) => setQuotationNo(e.target.value)}
-        />
-
-        <input
-          type="date"
-          value={quotationDate}
-          onChange={(e) => setQuotationDate(e.target.value)}
-        />
-
-        <input
-          type="text"
-          placeholder="Customer Name"
-          value={customerName}
-          onChange={(e) => setCustomerName(e.target.value)}
-        />
-
-        <input
-          type="text"
-          placeholder="Customer Mobile"
-          value={customerMobile}
-          onChange={(e) => setCustomerMobile(e.target.value)}
-        />
-
-        <input
-          type="text"
-          placeholder="Customer Address"
-          value={customerAddress}
-          onChange={(e) => setCustomerAddress(e.target.value)}
-        />
-
-        <input
-          type="number"
-          placeholder="Sheet Length (mm)"
-          value={sheetLength}
-          onChange={(e) => setSheetLength(e.target.value)}
-        />
-
-        <input
-          type="number"
-          placeholder="Sheet Width (mm)"
-          value={sheetWidth}
-          onChange={(e) => setSheetWidth(e.target.value)}
-        />
-
-        <input
-          type="number"
-          placeholder="Discount Amount"
-          value={discountAmount}
-          onChange={(e) => setDiscountAmount(e.target.value)}
-        />
-
-        <input
-          type="number"
-          placeholder="Validity Days"
-          value={validityDays}
-          onChange={(e) => setValidityDays(e.target.value)}
-        />
-
-        <input
-          type="number"
-          placeholder="Advance %"
-          value={advancePercent}
-          onChange={(e) => setAdvancePercent(e.target.value)}
-        />
-
-        <input
-          type="number"
-          placeholder="Delivery Days"
-          value={deliveryDays}
-          onChange={(e) => setDeliveryDays(e.target.value)}
-        />
-
-        <textarea
-          placeholder="Included Scope"
-          value={scopeIncluded}
-          onChange={(e) => setScopeIncluded(e.target.value)}
-          rows="3"
-        />
-
-        <textarea
-          placeholder="Excluded Scope"
-          value={scopeExcluded}
-          onChange={(e) => setScopeExcluded(e.target.value)}
-          rows="3"
-        />
-
-        <textarea
-          placeholder="Terms Text"
-          value={termsText}
-          onChange={(e) => setTermsText(e.target.value)}
-          rows="3"
-        />
-
-        <button onClick={handlePrint}>Print / Save as PDF</button>
-      </div>
-
-      <div
-        className="quotation-print-area"
-        style={{
-          background: "#fff",
-          padding: "30px",
-          border: "1px solid #ccc",
-          borderRadius: "10px",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "20px",
-            flexWrap: "wrap",
-            gap: "10px",
-          }}
-        >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
           <div>
-            <h2 style={{ margin: 0 }}>{companyName}</h2>
-            <p style={{ margin: "6px 0" }}>Interior Design Quotation</p>
-            <p style={{ margin: "6px 0" }}>
-              <strong>Mobile:</strong> {companyMobile || "-"}
-            </p>
-            <p style={{ margin: "6px 0" }}>
-              <strong>Email:</strong> {companyEmail || "-"}
-            </p>
+            <h4 style={{ margin: "0 0 10px" }}>Record & Sheet</h4>
+            <div style={inputRow}>
+              <span style={label}>Wardrobe Record</span>
+              <select value={selectedRecordId ?? ""} onChange={(e) => setSelectedRecordId(Number(e.target.value))}>
+                {wardrobeRecords.map((r) => (
+                  <option key={r.id} value={r.id}>#{r.id} — {r.itemName} ({r.subProjectName})</option>
+                ))}
+              </select>
+            </div>
+            <div style={inputRow}>
+              <span style={label}>Sheet L (mm)</span>
+              <input type="number" value={sheetLength} onChange={(e) => setSheetLength(e.target.value)} />
+            </div>
+            <div style={inputRow}>
+              <span style={label}>Sheet W (mm)</span>
+              <input type="number" value={sheetWidth} onChange={(e) => setSheetWidth(e.target.value)} />
+            </div>
           </div>
 
           <div>
-            <p style={{ margin: "6px 0" }}>
-              <strong>Quotation No:</strong> {quotationNo}
-            </p>
-            <p style={{ margin: "6px 0" }}>
-              <strong>Date:</strong> {quotationDate}
-            </p>
-            <p style={{ margin: "6px 0" }}>
-              <strong>Customer:</strong> {customerName}
-            </p>
-            <p style={{ margin: "6px 0" }}>
-              <strong>Mobile:</strong> {customerMobile || "-"}
-            </p>
-            <p style={{ margin: "6px 0" }}>
-              <strong>Address:</strong> {customerAddress || "-"}
-            </p>
+            <h4 style={{ margin: "0 0 10px" }}>Company</h4>
+            <div style={inputRow}><span style={label}>Company Name</span><input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Mobile</span><input type="text" value={companyMobile} onChange={(e) => setCompanyMobile(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Email</span><input type="text" value={companyEmail} onChange={(e) => setCompanyEmail(e.target.value)} /></div>
+          </div>
+
+          <div>
+            <h4 style={{ margin: "0 0 10px" }}>Customer</h4>
+            <div style={inputRow}><span style={label}>Name</span><input type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Mobile</span><input type="text" value={customerMobile} onChange={(e) => setCustomerMobile(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Address</span><input type="text" value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} /></div>
+          </div>
+
+          <div>
+            <h4 style={{ margin: "0 0 10px" }}>Quotation</h4>
+            <div style={inputRow}><span style={label}>Quotation No</span><input type="text" value={quotationNo} onChange={(e) => setQuotationNo(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Date</span><input type="date" value={quotationDate} onChange={(e) => setQuotationDate(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Markup %</span><input type="number" value={markupPercent} onChange={(e) => setMarkupPercent(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Discount (₹)</span><input type="number" value={discountAmount} onChange={(e) => setDiscountAmount(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>GST %</span><input type="number" value={gstPercent} onChange={(e) => setGstPercent(e.target.value)} /></div>
+          </div>
+
+          <div>
+            <h4 style={{ margin: "0 0 10px" }}>Terms</h4>
+            <div style={inputRow}><span style={label}>Validity (days)</span><input type="number" value={validityDays} onChange={(e) => setValidityDays(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Advance %</span><input type="number" value={advancePercent} onChange={(e) => setAdvancePercent(e.target.value)} /></div>
+            <div style={inputRow}><span style={label}>Delivery (days)</span><input type="number" value={deliveryDays} onChange={(e) => setDeliveryDays(e.target.value)} /></div>
+          </div>
+
+          <div>
+            <h4 style={{ margin: "0 0 10px" }}>Scope & Terms Text</h4>
+            <textarea placeholder="Included Scope" value={scopeIncluded} onChange={(e) => setScopeIncluded(e.target.value)} rows="2" style={{ width: "100%", marginBottom: 8 }} />
+            <textarea placeholder="Excluded Scope" value={scopeExcluded} onChange={(e) => setScopeExcluded(e.target.value)} rows="2" style={{ width: "100%", marginBottom: 8 }} />
+            <textarea placeholder="Terms Text" value={termsText} onChange={(e) => setTermsText(e.target.value)} rows="2" style={{ width: "100%" }} />
+          </div>
+        </div>
+
+        <button onClick={() => window.print()} style={{ marginTop: 16 }}>Print / Save as PDF</button>
+      </div>
+
+      {/* ─── Printable Quotation ─── */}
+      <div className="quotation-print-area" style={{ background: "#fff", padding: 30, border: "1px solid #d1d5db", borderRadius: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <h2 style={{ margin: 0 }}>{companyName}</h2>
+            <p style={{ margin: "4px 0", color: "#6b7280" }}>Interior Design Quotation</p>
+            {companyMobile && <p style={{ margin: "4px 0" }}><strong>Mobile:</strong> {companyMobile}</p>}
+            {companyEmail && <p style={{ margin: "4px 0" }}><strong>Email:</strong> {companyEmail}</p>}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <p style={{ margin: "4px 0" }}><strong>Quotation No:</strong> {quotationNo}</p>
+            <p style={{ margin: "4px 0" }}><strong>Date:</strong> {quotationDate}</p>
+            <p style={{ margin: "4px 0" }}><strong>Customer:</strong> {customerName || "-"}</p>
+            {customerMobile && <p style={{ margin: "4px 0" }}><strong>Mobile:</strong> {customerMobile}</p>}
+            {customerAddress && <p style={{ margin: "4px 0" }}><strong>Address:</strong> {customerAddress}</p>}
           </div>
         </div>
 
         <hr />
 
-        <div style={{ marginTop: "20px", marginBottom: "20px" }}>
-          <p><strong>Project:</strong> {configuredWardrobe.projectName}</p>
-          <p><strong>Sub Project:</strong> {configuredWardrobe.subProjectName}</p>
-          <p><strong>Item Name:</strong> {configuredWardrobe.itemName}</p>
-          <p><strong>Door Type:</strong> {configuredWardrobe.doorType || "-"}</p>
-          <p><strong>Specification:</strong> {configuredWardrobe.specification || "-"}</p>
-          <p><strong>Remarks:</strong> {configuredWardrobe.remarks || "-"}</p>
-          <p><strong>Template:</strong> {configuredWardrobe.templateName}</p>
-          <p>
-            <strong>Width:</strong>{" "}
-            {roundTo2(mmToFeet(configuredWardrobe.widthMm))} ft (
-            {configuredWardrobe.widthMm} mm)
+        <div style={{ margin: "16px 0", padding: "12px 0", borderBottom: "1px solid #e5e7eb" }}>
+          <p style={{ margin: "3px 0" }}><strong>Project:</strong> {record.projectName} / {record.subProjectName}</p>
+          <p style={{ margin: "3px 0" }}><strong>Item:</strong> {record.itemName} — {record.doorType} door</p>
+          {record.specification && <p style={{ margin: "3px 0" }}><strong>Specification:</strong> {record.specification}</p>}
+          {record.remarks && <p style={{ margin: "3px 0" }}><strong>Remarks:</strong> {record.remarks}</p>}
+          <p style={{ margin: "3px 0" }}>
+            <strong>Size:</strong> W {roundTo2(mmToFeet(record.widthMm))} ft × H {roundTo2(mmToFeet(record.heightMm))} ft × D {roundTo2(mmToFeet(record.depthMm))} ft
+            &nbsp;({record.widthMm} × {record.heightMm} × {record.depthMm} mm)
           </p>
-          <p>
-            <strong>Height:</strong>{" "}
-            {roundTo2(mmToFeet(configuredWardrobe.heightMm))} ft (
-            {configuredWardrobe.heightMm} mm)
-          </p>
-          <p>
-            <strong>Depth:</strong>{" "}
-            {roundTo2(mmToFeet(configuredWardrobe.depthMm))} ft (
-            {configuredWardrobe.depthMm} mm)
-          </p>
-          <p>
-            <strong>Total Panel Area:</strong>{" "}
-            {roundTo2(sqMmToSqFt(totalPanelArea))} sq ft
+          <p style={{ margin: "3px 0" }}>
+            <strong>Panel Area:</strong> {roundTo2(sqMmToSqFt(totalPanelAreaSqMm))} sq ft
           </p>
         </div>
 
         {normalizedHardwareItems.length > 0 && (
-          <div style={{ marginBottom: "20px" }}>
+          <div style={{ marginBottom: 20 }}>
             <h3>Hardware Breakdown</h3>
-            <table border="1" cellPadding="10" cellSpacing="0" width="100%">
+            <table border="1" cellPadding="8" cellSpacing="0" width="100%">
               <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Hardware Item</th>
-                  <th>Qty</th>
-                  <th>Rate</th>
-                  <th>Amount</th>
-                </tr>
+                <tr><th>#</th><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
               </thead>
               <tbody>
-                {normalizedHardwareItems.map((item, index) => (
-                  <tr key={`${item.itemName}-${index}`}>
-                    <td>{index + 1}</td>
+                {normalizedHardwareItems.map((item, i) => (
+                  <tr key={`${item.itemName}-${i}`}>
+                    <td>{i + 1}</td>
                     <td>{item.itemName || "-"}</td>
                     <td>{item.qty}</td>
-                    <td>{item.rate}</td>
-                    <td>{item.amount}</td>
+                    <td>{formatCurrency(item.rate)}</td>
+                    <td>{formatCurrency(item.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -432,61 +268,58 @@ function Quotation() {
           </div>
         )}
 
-        <table border="1" cellPadding="10" cellSpacing="0" width="100%">
-          <thead>
-            <tr>
-              <th>Description</th>
-              <th>Amount</th>
-            </tr>
-          </thead>
+        <h3>Cost Summary</h3>
+        <table border="1" cellPadding="8" cellSpacing="0" style={{ minWidth: 360, marginBottom: 20 }}>
           <tbody>
-            <tr><td>Wood / Sheet Material</td><td>{woodAmount}</td></tr>
-            <tr><td>Laminate</td><td>{laminateAmount}</td></tr>
-            <tr><td>Edge Band</td><td>{edgeBandAmount}</td></tr>
-            <tr><td>Hardware</td><td>{hardwareAmount}</td></tr>
-            <tr><td>Glue / Adhesive</td><td>{glueAmount}</td></tr>
-            <tr><td>Drawer</td><td>{drawerAmount}</td></tr>
-            <tr><td>Front Frame</td><td>{frontFrameAmount}</td></tr>
-            <tr><td>Labor</td><td>{laborAmount}</td></tr>
-            <tr><td>Transport</td><td>{transportAmount}</td></tr>
-            <tr><td><strong>Sub Total</strong></td><td><strong>{subTotal}</strong></td></tr>
-            <tr><td><strong>Discount</strong></td><td><strong>{discountAmount}</strong></td></tr>
-            <tr><td><strong>Net Amount</strong></td><td><strong>{netAmount}</strong></td></tr>
-            <tr><td>GST {gstPercent}%</td><td>{gstAmount}</td></tr>
-            <tr><td><strong>Grand Total</strong></td><td><strong>{grandTotal}</strong></td></tr>
+            <tr><td>Wood / Sheet Material</td><td>{formatCurrency(woodAmount)}</td></tr>
+            <tr><td>Laminate</td><td>{formatCurrency(laminateAmount)}</td></tr>
+            <tr><td>Edge Band</td><td>{formatCurrency(edgeBandAmount)}</td></tr>
+            <tr><td>Hardware</td><td>{formatCurrency(hardwareAmount)}</td></tr>
+            <tr><td>Glue / Adhesive</td><td>{formatCurrency(glueAmount)}</td></tr>
+            <tr><td>Drawer</td><td>{formatCurrency(drawerAmount)}</td></tr>
+            <tr><td>Front Frame</td><td>{formatCurrency(frontFrameAmount)}</td></tr>
+            <tr><td>Labor</td><td>{formatCurrency(laborAmount)}</td></tr>
+            <tr><td>Transport</td><td>{formatCurrency(transportAmount)}</td></tr>
+            {markupPercent > 0 && (
+              <tr><td>Markup {markupPercent}%</td><td>{formatCurrency(markupAmount)}</td></tr>
+            )}
+            <tr style={{ background: "#f3f4f6" }}>
+              <td><strong>Sub Total</strong></td><td><strong>{formatCurrency(subTotal)}</strong></td>
+            </tr>
+            {Number(discountAmount) > 0 && (
+              <tr><td>Discount</td><td>- {formatCurrency(discountAmount)}</td></tr>
+            )}
+            {Number(discountAmount) > 0 && (
+              <tr><td><strong>Net Amount</strong></td><td><strong>{formatCurrency(netAmount)}</strong></td></tr>
+            )}
+            <tr><td>GST {gstPercent}%</td><td>{formatCurrency(gstAmount)}</td></tr>
+            <tr style={{ background: "#eff6ff" }}>
+              <td><strong>Grand Total</strong></td><td><strong>{formatCurrency(grandTotal)}</strong></td>
+            </tr>
+            <tr><td>Advance {advancePercent}%</td><td>{formatCurrency(advanceAmount)}</td></tr>
           </tbody>
         </table>
 
-        <div style={{ marginTop: "24px" }}>
-          <h3>Included Scope</h3>
-          <p>{scopeIncluded || "-"}</p>
-
-          <h3>Excluded Scope</h3>
-          <p>{scopeExcluded || "-"}</p>
+        <div style={{ marginBottom: 16 }}>
+          <h3>Scope of Work</h3>
+          <p><strong>Included:</strong> {scopeIncluded || "-"}</p>
+          <p><strong>Excluded:</strong> {scopeExcluded || "-"}</p>
 
           <h3>Terms & Conditions</h3>
-          <p><strong>Validity:</strong> {validityDays} days from quotation date</p>
-          <p><strong>Advance:</strong> {advancePercent}% ({advanceAmount})</p>
-          <p><strong>Delivery Timeline:</strong> {deliveryDays} days from advance confirmation and final measurements</p>
-          <p>{termsText || "-"}</p>
+          <p>Validity: {validityDays} days from quotation date</p>
+          <p>Advance: {advancePercent}% ({formatCurrency(advanceAmount)}) on order confirmation</p>
+          <p>Delivery: {deliveryDays} days from advance and final measurements</p>
+          {termsText && <p>{termsText}</p>}
         </div>
 
-        <div
-          style={{
-            marginTop: "40px",
-            display: "flex",
-            justifyContent: "space-between",
-            gap: "30px",
-          }}
-        >
+        <div style={{ marginTop: 40, display: "flex", justifyContent: "space-between", gap: 30 }}>
           <div style={{ width: "45%" }}>
             <p><strong>Customer Acceptance</strong></p>
-            <div style={{ borderTop: "1px solid #000", marginTop: "50px" }} />
+            <div style={{ borderTop: "1px solid #000", marginTop: 50 }} />
           </div>
-
-          <div style={{ width: "45%" }}>
+          <div style={{ width: "45%", textAlign: "right" }}>
             <p><strong>Authorized Signatory</strong></p>
-            <div style={{ borderTop: "1px solid #000", marginTop: "50px" }} />
+            <div style={{ borderTop: "1px solid #000", marginTop: 50 }} />
           </div>
         </div>
       </div>

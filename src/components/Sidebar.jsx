@@ -1,21 +1,141 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useAppData } from "../context/AppDataContext";
+
+function GroupLabel({ label }) {
+  return <div className="sidebar-group-label">{label}</div>;
+}
 
 function Sidebar() {
+  const { projects } = useAppData();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [projectsOpen, setProjectsOpen] = useState(true);
+
+  const onProjectsPage = location.pathname === "/projects";
+  const params = new URLSearchParams(location.search);
+  const activeProjectId = onProjectsPage ? Number(params.get("id")) : null;
+
   return (
     <div className="sidebar">
-      <h2 className="logo">Interior App</h2>
+      {/* Brand */}
+      <div className="sidebar-brand">
+        <div className="sidebar-brand-name">Interior App</div>
+        <div className="sidebar-brand-sub">Quotation & Cut Sheet</div>
+      </div>
+
+      {/* Search */}
+      <div className="sidebar-search">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+        <input placeholder="Search…" />
+      </div>
 
       <nav>
         <ul>
           <li><NavLink to="/">Dashboard</NavLink></li>
-          <li><NavLink to="/projects">Projects</NavLink></li>
-          <li><NavLink to="/sub-projects">Sub Projects</NavLink></li>
-          <li><NavLink to="/template-master">Template Master</NavLink></li>
-          <li><NavLink to="/wardrobe-configurator">Wardrobe Configurator</NavLink></li>
-          <li><NavLink to="/wardrobe-records">Wardrobe Records</NavLink></li>
+
+          <GroupLabel label="Setup" />
+
+          {/* Projects collapsible */}
+          <li>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 8px 6px 12px",
+                margin: "0 4px",
+                borderRadius: 8,
+                cursor: "pointer",
+                fontSize: 12,
+                color: onProjectsPage ? "var(--brand)" : "var(--stone-700)",
+                background: onProjectsPage ? "var(--brand-light)" : "transparent",
+                fontWeight: onProjectsPage ? 600 : 400,
+                userSelect: "none",
+              }}
+              onClick={() => {
+                if (!onProjectsPage) navigate("/projects");
+                else setProjectsOpen((o) => !o);
+              }}
+            >
+              <span style={{ flex: 1 }}>Projects &amp; Rooms</span>
+              <span
+                style={{ fontSize: 10, color: "var(--stone-400)" }}
+                onClick={(e) => { e.stopPropagation(); setProjectsOpen((o) => !o); }}
+              >
+                {projectsOpen ? "▲" : "▼"}
+              </span>
+            </div>
+
+            {projectsOpen && (
+              <ul style={{ paddingLeft: 16 }}>
+                {projects.map((p) => {
+                  const isActive = activeProjectId === p.id;
+                  return (
+                    <li key={p.id}>
+                      <div
+                        onClick={() => navigate(`/projects?id=${p.id}`)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "5px 8px 5px 12px",
+                          margin: "1px 4px",
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          fontSize: 11,
+                          color: isActive ? "var(--brand)" : "var(--stone-700)",
+                          background: isActive ? "var(--brand-light)" : "transparent",
+                          fontWeight: isActive ? 600 : 400,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          borderLeft: isActive ? "2px solid var(--brand)" : "2px solid transparent",
+                        }}
+                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--stone-100)"; }}
+                        onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+                        title={p.name}
+                      >
+                        {p.name}
+                      </div>
+                    </li>
+                  );
+                })}
+
+                <li>
+                  <div
+                    onClick={() => navigate("/projects")}
+                    style={{
+                      display: "block",
+                      padding: "5px 8px 5px 12px",
+                      margin: "1px 4px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      fontSize: 11,
+                      color: "var(--brand)",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--stone-100)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    + New Project
+                  </div>
+                </li>
+              </ul>
+            )}
+          </li>
+
+          <GroupLabel label="Configure" />
           <li><NavLink to="/items-pricing">Items Pricing</NavLink></li>
-          <li><NavLink to="/dimensions-entry">Dimensions Entry</NavLink></li>
-          <li><NavLink to="/cut-sheet-output">Cut Sheet Output</NavLink></li>
+          <li><NavLink to="/material-models">Material Models</NavLink></li>
+          <li><NavLink to="/template-master">Templates</NavLink></li>
+          <li><NavLink to="/wardrobe-configurator">Configurator</NavLink></li>
+          <li><NavLink to="/wardrobe-records">Saved Records</NavLink></li>
+
+          <GroupLabel label="Output" />
+          <li><NavLink to="/cut-sheet-output">Cut Sheet</NavLink></li>
           <li><NavLink to="/boq">BOQ</NavLink></li>
           <li><NavLink to="/project-boq">Project BOQ</NavLink></li>
           <li><NavLink to="/quotation">Quotation</NavLink></li>

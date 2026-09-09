@@ -1,29 +1,56 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAppData } from "../context/AppDataContext";
+import { formatCurrency } from "../utils/unitConversions";
+import { computeSheetCounts } from "../utils/binPack";
 
 function BOQ() {
-  const { generatedParts, configuredWardrobe, prices } = useAppData();
+  const { wardrobeRecords, prices, materialStockSettings } = useAppData();
+  const [searchParams] = useSearchParams();
 
-  const STANDARD_SHEET_LENGTH = 2400;
-  const STANDARD_SHEET_WIDTH = 1200;
+  const initialId = (() => {
+    const p = searchParams.get("record");
+    if (p) {
+      const id = Number(p);
+      if (wardrobeRecords.find((r) => r.id === id)) return id;
+    }
+    return wardrobeRecords[0]?.id ?? null;
+  })();
 
+  const [selectedRecordId, setSelectedRecordId] = useState(initialId);
   const [sheetLength, setSheetLength] = useState(2440);
   const [sheetWidth, setSheetWidth] = useState(1220);
+  const [gstPercent, setGstPercent] = useState(18);
 
-  if (generatedParts.length === 0 || !configuredWardrobe) {
+  const record = useMemo(() => {
+    if (selectedRecordId == null) return wardrobeRecords[0] || null;
+    return wardrobeRecords.find((r) => r.id === selectedRecordId) || null;
+  }, [wardrobeRecords, selectedRecordId]);
+
+  if (!wardrobeRecords.length || !record) {
     return (
       <div className="page-card">
         <h2>BOQ</h2>
-        <p>
-          No generated parts available. Please save parts from Wardrobe
-          Configurator first.
-        </p>
+        <p>No wardrobe records found. Save a wardrobe from the Configurator first.</p>
       </div>
     );
   }
 
-  const hardwareItems = Array.isArray(configuredWardrobe.hardwareItems)
-    ? configuredWardrobe.hardwareItems
+  const generatedParts = record.parts || [];
+
+  const STANDARD_SHEET_LENGTH = 2400;
+  const STANDARD_SHEET_WIDTH = 1200;
+
+  const canFitInSheet = (l, w) =>
+    (l <= STANDARD_SHEET_LENGTH && w <= STANDARD_SHEET_WIDTH) ||
+    (l <= STANDARD_SHEET_WIDTH && w <= STANDARD_SHEET_LENGTH);
+
+  const invalidParts = generatedParts.filter(
+    (p) => !canFitInSheet(p.lengthMm, p.widthMm)
+  );
+
+  const hardwareItems = Array.isArray(record.hardwareItems)
+    ? record.hardwareItems
     : [];
 
   const normalizedHardwareItems = hardwareItems
@@ -41,265 +68,165 @@ function BOQ() {
   const hardwareAmount =
     normalizedHardwareItems.length > 0
       ? normalizedHardwareItems.reduce((sum, item) => sum + item.amount, 0)
-      : Number(configuredWardrobe.hardwareAmount || 0);
+      : Number(record.hardwareAmount || 0);
 
-  const canFitInSheet = (lengthMm, widthMm) => {
-    return (
-      (lengthMm <= STANDARD_SHEET_LENGTH &&
-        widthMm <= STANDARD_SHEET_WIDTH) ||
-      (lengthMm <= STANDARD_SHEET_WIDTH &&
-        widthMm <= STANDARD_SHEET_LENGTH)
-    );
+  // Actual sheet count from real nesting (not naive area ÷ sheet area) —
+  // per-material stock size/texture from the Cut Sheet Optimizer is honored
+  // when set, else falls back to the sheet size entered above.
+  const getStockSize = (mat) => {
+    const s = materialStockSettings?.[mat];
+    return {
+      sheetW: s?.sheetW || Number(sheetLength),
+      sheetH: s?.sheetH || Number(sheetWidth),
+      sheetTexture: s?.sheetTexture ?? 1,
+    };
   };
-
-  const invalidParts = generatedParts.filter(
-    (part) => !canFitInSheet(part.lengthMm, part.widthMm)
+  const sheetCounts = computeSheetCounts(
+    generatedParts.map((p) => ({ ...p, partName: p.partName })),
+    getStockSize
   );
-
-  if (invalidParts.length > 0) {
-    return (
-      <div className="page-card">
-        <h2>BOQ</h2>
-        <p>
-          <strong>Project:</strong> {configuredWardrobe.projectName}
-        </p>
-        <p>
-          <strong>Sub Project:</strong> {configuredWardrobe.subProjectName}
-        </p>
-        <p>
-          <strong>Item Name:</strong> {configuredWardrobe.itemName}
-        </p>
-        <p>
-          <strong>Door Type:</strong> {configuredWardrobe.doorType || "-"}
-        </p>
-        <p>
-          <strong>Specification:</strong>{" "}
-          {configuredWardrobe.specification || "-"}
-        </p>
-        <p>
-          <strong>Remarks:</strong> {configuredWardrobe.remarks || "-"}
-        </p>
-
-        <div
-          style={{
-            marginTop: "20px",
-            padding: "14px",
-            border: "1px solid #dc2626",
-            background: "#fef2f2",
-            borderRadius: "10px",
-          }}
-        >
-          <p>
-            <strong>BOQ blocked:</strong> Some parts exceed standard sheet size
-            2400 x 1200 mm.
-          </p>
-          {invalidParts.map((part) => (
-            <p key={part.id}>
-              {part.partName}: {part.lengthMm} x {part.widthMm} mm
-            </p>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const sheetArea = Number(sheetLength) * Number(sheetWidth);
 
   const materialGroups = generatedParts.reduce((acc, part) => {
     const key = part.material || "Unknown";
-    const partArea =
-      Number(part.lengthMm) * Number(part.widthMm) * Number(part.qty);
-
-    if (!acc[key]) {
-      acc[key] = {
-        material: key,
-        totalAreaSqMm: 0,
-        totalQty: 0,
-      };
-    }
-
+    const partArea = Number(part.lengthMm) * Number(part.widthMm) * Number(part.qty);
+    if (!acc[key]) acc[key] = { material: key, totalAreaSqMm: 0, totalQty: 0 };
     acc[key].totalAreaSqMm += partArea;
     acc[key].totalQty += Number(part.qty);
-
     return acc;
   }, {});
 
   const groupedRows = Object.values(materialGroups).map((group) => {
-    const materialRateData = prices.find(
-      (item) => item.materialName === group.material
-    );
-
-    const requiredSheets =
-      sheetArea > 0 ? Math.ceil(group.totalAreaSqMm / sheetArea) : 0;
-
+    const materialRateData = prices.find((p) => p.materialName === group.material);
+    const requiredSheets = sheetCounts[group.material] || 0;
     const sheetRate = materialRateData ? Number(materialRateData.rate) : 0;
-    const basicAmount = sheetRate * requiredSheets;
-
     return {
       material: group.material,
       totalQty: group.totalQty,
       totalAreaSqMm: group.totalAreaSqMm,
       requiredSheets,
       sheetRate,
-      basicAmount,
+      basicAmount: sheetRate * requiredSheets,
       priceFound: !!materialRateData,
     };
   });
 
-  const woodAmount = groupedRows.reduce(
-    (total, row) => total + row.basicAmount,
-    0
-  );
-  const laminateAmount = Number(configuredWardrobe.laminateAmount || 0);
-  const edgeBandAmount = Number(configuredWardrobe.edgeBandAmount || 0);
-  const glueAmount = Number(configuredWardrobe.glueAmount || 0);
-  const drawerAmount = Number(configuredWardrobe.drawerAmount || 0);
-  const frontFrameAmount = Number(configuredWardrobe.frontFrameAmount || 0);
-  const laborAmount = Number(configuredWardrobe.laborAmount || 0);
-  const transportAmount = Number(configuredWardrobe.transportAmount || 0);
+  const woodAmount = groupedRows.reduce((t, r) => t + r.basicAmount, 0);
+  const laminateAmount = Number(record.laminateAmount || 0);
+  const edgeBandAmount = Number(record.edgeBandAmount || 0);
+  const glueAmount = Number(record.glueAmount || 0);
+  const drawerAmount = Number(record.drawerAmount || 0);
+  const frontFrameAmount = Number(record.frontFrameAmount || 0);
+  const laborAmount = Number(record.laborAmount || 0);
+  const transportAmount = Number(record.transportAmount || 0);
 
   const subTotal =
-    woodAmount +
-    laminateAmount +
-    edgeBandAmount +
-    hardwareAmount +
-    glueAmount +
-    drawerAmount +
-    frontFrameAmount +
-    laborAmount +
-    transportAmount;
+    woodAmount + laminateAmount + edgeBandAmount + hardwareAmount +
+    glueAmount + drawerAmount + frontFrameAmount + laborAmount + transportAmount;
 
-  const gstPercent = 18;
-  const gstAmount = (subTotal * gstPercent) / 100;
+  const gstAmount = (subTotal * Number(gstPercent || 0)) / 100;
   const grandTotal = subTotal + gstAmount;
 
-  const grandTotalArea = groupedRows.reduce(
-    (total, row) => total + row.totalAreaSqMm,
-    0
-  );
+  const sectionCard = {
+    border: "1px solid #d1d5db",
+    borderRadius: "10px",
+    padding: "16px",
+    background: "#fff",
+    marginBottom: "20px",
+  };
 
   return (
     <div className="page-card">
-      <h2>BOQ</h2>
-
-      <p>
-        <strong>Project:</strong> {configuredWardrobe.projectName}
-      </p>
-      <p>
-        <strong>Sub Project:</strong> {configuredWardrobe.subProjectName}
-      </p>
-      <p>
-        <strong>Item Name:</strong> {configuredWardrobe.itemName}
-      </p>
-      <p>
-        <strong>Door Type:</strong> {configuredWardrobe.doorType || "-"}
-      </p>
-      <p>
-        <strong>Specification:</strong> {configuredWardrobe.specification || "-"}
-      </p>
-      <p>
-        <strong>Remarks:</strong> {configuredWardrobe.remarks || "-"}
-      </p>
-      <p>
-        <strong>Template:</strong> {configuredWardrobe.templateName}
-      </p>
-
-      <div
-        style={{
-          marginBottom: "20px",
-          padding: "16px",
-          border: "1px solid #d1d5db",
-          borderRadius: "10px",
-          background: "#ffffff",
-        }}
-      >
-        <p>
-          <strong>Wardrobe Width:</strong> {configuredWardrobe.widthMm} mm
-        </p>
-        <p>
-          <strong>Wardrobe Height:</strong> {configuredWardrobe.heightMm} mm
-        </p>
-        <p>
-          <strong>Wardrobe Depth:</strong> {configuredWardrobe.depthMm} mm
-        </p>
-        <p>
-          <strong>Total Generated Parts:</strong> {generatedParts.length}
-        </p>
+      <div className="no-print" style={{ marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ flex: "1 1 260px" }}>
+          <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Wardrobe Record</label>
+          <select
+            value={selectedRecordId ?? ""}
+            onChange={(e) => setSelectedRecordId(Number(e.target.value))}
+          >
+            {wardrobeRecords.map((r) => (
+              <option key={r.id} value={r.id}>
+                #{r.id} — {r.itemName} ({r.projectName} / {r.subProjectName})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ flex: "0 0 160px" }}>
+          <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Sheet L × W (mm)</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input type="number" value={sheetLength} onChange={(e) => setSheetLength(e.target.value)} style={{ width: 80 }} />
+            <input type="number" value={sheetWidth} onChange={(e) => setSheetWidth(e.target.value)} style={{ width: 80 }} />
+          </div>
+        </div>
+        <div style={{ flex: "0 0 120px" }}>
+          <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>GST %</label>
+          <input type="number" value={gstPercent} onChange={(e) => setGstPercent(e.target.value)} style={{ width: 80 }} />
+        </div>
+        <div>
+          <button onClick={() => window.print()} style={{ marginTop: 20 }}>Print / Save PDF</button>
+        </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gap: "10px",
-          maxWidth: "320px",
-          marginBottom: "20px",
-        }}
-      >
-        <input
-          type="number"
-          placeholder="Sheet Length (mm)"
-          value={sheetLength}
-          onChange={(e) => setSheetLength(e.target.value)}
-        />
-
-        <input
-          type="number"
-          placeholder="Sheet Width (mm)"
-          value={sheetWidth}
-          onChange={(e) => setSheetWidth(e.target.value)}
-        />
+      <div style={sectionCard}>
+        <p style={{ margin: "4px 0" }}><strong>Project:</strong> {record.projectName}</p>
+        <p style={{ margin: "4px 0" }}><strong>Sub Project:</strong> {record.subProjectName}</p>
+        <p style={{ margin: "4px 0" }}><strong>Item Name:</strong> {record.itemName}</p>
+        <p style={{ margin: "4px 0" }}><strong>Door Type:</strong> {record.doorType || "-"}</p>
+        {record.specification && <p style={{ margin: "4px 0" }}><strong>Specification:</strong> {record.specification}</p>}
+        {record.remarks && <p style={{ margin: "4px 0" }}><strong>Remarks:</strong> {record.remarks}</p>}
+        <p style={{ margin: "4px 0" }}><strong>Template:</strong> {record.templateName}</p>
+        <p style={{ margin: "4px 0" }}><strong>Size:</strong> {record.widthMm} × {record.heightMm} × {record.depthMm} mm</p>
       </div>
 
-      <div
-        style={{
-          marginBottom: "20px",
-          padding: "16px",
-          border: "1px solid #d1d5db",
-          borderRadius: "10px",
-          background: "#ffffff",
-        }}
-      >
-        <p>
-          <strong>Grand Total Area:</strong> {grandTotalArea} sq mm
-        </p>
-        <p>
-          <strong>Sub Total:</strong> {subTotal}
-        </p>
-        <p>
-          <strong>GST Amount:</strong> {gstAmount}
-        </p>
-        <p>
-          <strong>Grand Total:</strong> {grandTotal}
-        </p>
-      </div>
+      {invalidParts.length > 0 && (
+        <div style={{ padding: 14, border: "1px solid #dc2626", background: "#fef2f2", borderRadius: 10, marginBottom: 20 }}>
+          <strong>Sheet Size Warning:</strong> Some parts exceed 2400 × 1200 mm.
+          {invalidParts.map((p) => (
+            <p key={p.id}>{p.partName}: {p.lengthMm} × {p.widthMm} mm</p>
+          ))}
+        </div>
+      )}
+
+      <h3>Material Breakdown</h3>
+      <table border="1" cellPadding="10" cellSpacing="0" width="100%" style={{ marginBottom: 20 }}>
+        <thead>
+          <tr>
+            <th>Material</th>
+            <th>Total Parts Qty</th>
+            <th>Area (sq mm)</th>
+            <th>Sheets Required</th>
+            <th>Rate / Sheet</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groupedRows.map((row) => (
+            <tr key={row.material} style={!row.priceFound ? { background: "#fef9c3" } : {}}>
+              <td>{row.material}{!row.priceFound && " ⚠ no rate"}</td>
+              <td>{row.totalQty}</td>
+              <td>{row.totalAreaSqMm.toLocaleString("en-IN")}</td>
+              <td>{row.requiredSheets}</td>
+              <td>{formatCurrency(row.sheetRate)}</td>
+              <td>{formatCurrency(row.basicAmount)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       {normalizedHardwareItems.length > 0 && (
         <>
           <h3>Hardware Breakdown</h3>
-          <table
-            border="1"
-            cellPadding="10"
-            cellSpacing="0"
-            width="100%"
-            style={{ marginBottom: "20px" }}
-          >
+          <table border="1" cellPadding="10" cellSpacing="0" width="100%" style={{ marginBottom: 20 }}>
             <thead>
-              <tr>
-                <th>#</th>
-                <th>Hardware Item</th>
-                <th>Qty</th>
-                <th>Rate</th>
-                <th>Amount</th>
-              </tr>
+              <tr><th>#</th><th>Hardware Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
             </thead>
             <tbody>
-              {normalizedHardwareItems.map((item, index) => (
-                <tr key={`${item.itemName}-${index}`}>
-                  <td>{index + 1}</td>
+              {normalizedHardwareItems.map((item, i) => (
+                <tr key={`${item.itemName}-${i}`}>
+                  <td>{i + 1}</td>
                   <td>{item.itemName || "-"}</td>
                   <td>{item.qty}</td>
-                  <td>{item.rate}</td>
-                  <td>{item.amount}</td>
+                  <td>{formatCurrency(item.rate)}</td>
+                  <td>{formatCurrency(item.amount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -307,70 +234,26 @@ function BOQ() {
         </>
       )}
 
-      <h3>Excel Style Cost Summary</h3>
-      <table border="1" cellPadding="10" cellSpacing="0" width="100%">
-        <thead>
-          <tr>
-            <th>Cost Head</th>
-            <th>Amount</th>
-          </tr>
-        </thead>
+      <h3>Cost Summary</h3>
+      <table border="1" cellPadding="10" cellSpacing="0" style={{ marginBottom: 20, minWidth: 360 }}>
         <tbody>
-          <tr>
-            <td>Wood / Sheet Material</td>
-            <td>{woodAmount}</td>
+          <tr><td>Wood / Sheet Material</td><td>{formatCurrency(woodAmount)}</td></tr>
+          <tr><td>Laminate</td><td>{formatCurrency(laminateAmount)}</td></tr>
+          <tr><td>Edge Band</td><td>{formatCurrency(edgeBandAmount)}</td></tr>
+          <tr><td>Hardware</td><td>{formatCurrency(hardwareAmount)}</td></tr>
+          <tr><td>Glue / Adhesive</td><td>{formatCurrency(glueAmount)}</td></tr>
+          <tr><td>Drawer</td><td>{formatCurrency(drawerAmount)}</td></tr>
+          <tr><td>Front Frame</td><td>{formatCurrency(frontFrameAmount)}</td></tr>
+          <tr><td>Labor</td><td>{formatCurrency(laborAmount)}</td></tr>
+          <tr><td>Transport</td><td>{formatCurrency(transportAmount)}</td></tr>
+          <tr style={{ background: "#f3f4f6" }}>
+            <td><strong>Sub Total</strong></td>
+            <td><strong>{formatCurrency(subTotal)}</strong></td>
           </tr>
-          <tr>
-            <td>Laminate</td>
-            <td>{laminateAmount}</td>
-          </tr>
-          <tr>
-            <td>Edge Band</td>
-            <td>{edgeBandAmount}</td>
-          </tr>
-          <tr>
-            <td>Hardware</td>
-            <td>{hardwareAmount}</td>
-          </tr>
-          <tr>
-            <td>Glue / Adhesive</td>
-            <td>{glueAmount}</td>
-          </tr>
-          <tr>
-            <td>Drawer</td>
-            <td>{drawerAmount}</td>
-          </tr>
-          <tr>
-            <td>Front Frame</td>
-            <td>{frontFrameAmount}</td>
-          </tr>
-          <tr>
-            <td>Labor</td>
-            <td>{laborAmount}</td>
-          </tr>
-          <tr>
-            <td>Transport</td>
-            <td>{transportAmount}</td>
-          </tr>
-          <tr>
-            <td>
-              <strong>Sub Total</strong>
-            </td>
-            <td>
-              <strong>{subTotal}</strong>
-            </td>
-          </tr>
-          <tr>
-            <td>GST {gstPercent}%</td>
-            <td>{gstAmount}</td>
-          </tr>
-          <tr>
-            <td>
-              <strong>Grand Total</strong>
-            </td>
-            <td>
-              <strong>{grandTotal}</strong>
-            </td>
+          <tr><td>GST {gstPercent}%</td><td>{formatCurrency(gstAmount)}</td></tr>
+          <tr style={{ background: "#eff6ff" }}>
+            <td><strong>Grand Total</strong></td>
+            <td><strong>{formatCurrency(grandTotal)}</strong></td>
           </tr>
         </tbody>
       </table>

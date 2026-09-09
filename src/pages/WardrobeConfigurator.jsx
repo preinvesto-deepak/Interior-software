@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { templateList } from "../data/templateData";
 import { mmToFeet, roundTo2 } from "../utils/unitConversions";
 import { useAppData } from "../context/AppDataContext";
 
@@ -109,6 +108,7 @@ function WardrobeConfigurator() {
     projects,
     subProjects,
     prices,
+    templates,
     selectedTemplateId,
     setGeneratedParts,
     configuredWardrobe,
@@ -127,12 +127,10 @@ function WardrobeConfigurator() {
   const SWING_MAX_DOOR_WIDTH_MM = 450;
 
   const selectedTemplate = useMemo(() => {
-    return (
-      templateList.find(
-        (item) => String(item.id) === String(selectedTemplateId)
-      ) || templateList[0]
-    );
-  }, [selectedTemplateId]);
+    return templates.find((item) => String(item.id) === String(selectedTemplateId)) || templates[0] || null;
+  }, [selectedTemplateId, templates]);
+
+  const hasDoors = selectedTemplate?.hasDoors !== false;
 
   const createHardwareRow = (rowId) => ({
     rowId,
@@ -750,7 +748,9 @@ function WardrobeConfigurator() {
   const estimatedSubTotal = woodEstimate + hardwareAmount + extraHeadsTotal;
 
   const swingDoorWidthExceeded =
+    hasDoors &&
     formData.doorType === "swing" &&
+    Number(formData.doorsH) > 0 &&
     doorLeafWidthMm > SWING_MAX_DOOR_WIDTH_MM;
 
   const hasProject = Boolean(formData.projectName);
@@ -881,12 +881,12 @@ function WardrobeConfigurator() {
       heightMm: defaultHeightMm,
       depthMm: selectedTemplate.defaultValues.depthMm,
       doorType: defaultDoorType,
-      doorsH: getRecommendedDoorsH(defaultWidthMm, defaultDoorType),
-      doorsV: getRecommendedDoorsV(defaultHeightMm),
+      doorsH: hasDoors ? getRecommendedDoorsH(defaultWidthMm, defaultDoorType) : 0,
+      doorsV: hasDoors ? getRecommendedDoorsV(defaultHeightMm) : 0,
       backParts: getRecommendedBackParts(defaultWidthMm),
       partitions: selectedTemplate.defaultValues.partitions,
       shelves: selectedTemplate.defaultValues.shelves,
-      frontFrame: selectedTemplate.defaultValues.frontFrame,
+      frontFrame: hasDoors ? selectedTemplate.defaultValues.frontFrame : 0,
       specification: "",
       remarks: "",
       glueAmount: 0,
@@ -991,15 +991,19 @@ function WardrobeConfigurator() {
           <div>
             <strong>Height:</strong> {formData.heightMm} mm
           </div>
-          <div>
-            <strong>Door Type:</strong> {formData.doorType}
-          </div>
+          {hasDoors && (
+            <div>
+              <strong>Door Type:</strong> {formData.doorType}
+            </div>
+          )}
           <div>
             <strong>Back Parts:</strong> {formData.backParts}
           </div>
-          <div>
-            <strong>Doors:</strong> {formData.doorsH} x {formData.doorsV}
-          </div>
+          {hasDoors && (
+            <div>
+              <strong>Doors:</strong> {formData.doorsH} x {formData.doorsV}
+            </div>
+          )}
           <div>
             <strong>Laminate:</strong> {laminateAmount}
           </div>
@@ -1015,7 +1019,7 @@ function WardrobeConfigurator() {
         </div>
       </div>
 
-      <h2>Wardrobe Configurator</h2>
+      <h2>{selectedTemplate.templateName} Configurator</h2>
 
       <SectionCard title="Validation Summary">
         <ValidationItem ok={hasProject} text="Project selected" />
@@ -1025,10 +1029,12 @@ function WardrobeConfigurator() {
           ok={hasValidParts}
           text="All generated parts fit within standard sheet size"
         />
-        <ValidationItem
-          ok={!swingDoorWidthExceeded}
-          text={`Swing door leaf width must be ${SWING_MAX_DOOR_WIDTH_MM} mm or less`}
-        />
+        {hasDoors && (
+          <ValidationItem
+            ok={!swingDoorWidthExceeded}
+            text={`Swing door leaf width must be ${SWING_MAX_DOOR_WIDTH_MM} mm or less`}
+          />
+        )}
         <div
           style={{
             marginTop: "12px",
@@ -1181,132 +1187,136 @@ function WardrobeConfigurator() {
       </SectionCard>
 
       <SectionCard title="Configuration">
-        <FieldRow
-          label={
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                fontWeight: "600",
-              }}
+        {hasDoors && (
+          <>
+            <FieldRow
+              label={
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    fontWeight: "600",
+                  }}
+                >
+                  <span>Door Type</span>
+                  <InfoHint text="Select Sliding Door or Swing Door. Sliding door width follows back part type breakup. Swing door width is limited to max 450 mm per leaf." />
+                </div>
+              }
             >
-              <span>Door Type</span>
-              <InfoHint text="Select Sliding Door or Swing Door. Sliding door width follows back part type breakup. Swing door width is limited to max 450 mm per leaf." />
-            </div>
-          }
-        >
-          <select
-            name="doorType"
-            value={formData.doorType}
-            onChange={handleChange}
-          >
-            <option value="swing">Swing Door</option>
-            <option value="sliding">Sliding Door</option>
-          </select>
-        </FieldRow>
-
-        <FieldRow
-          label={
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                fontWeight: "600",
-              }}
-            >
-              <span>Doors H</span>
-              <InfoHint text="Number of door pieces across width. Sliding: same formula as back parts. Swing: maximum leaf width 450 mm." />
-            </div>
-          }
-        >
-          <div>
-            <div
-              style={{ display: "flex", gap: "10px", alignItems: "center" }}
-            >
-              <input
-                type="number"
-                name="doorsH"
-                value={formData.doorsH}
+              <select
+                name="doorType"
+                value={formData.doorType}
                 onChange={handleChange}
-                style={{ flex: 1 }}
-              />
-              <button type="button" onClick={applyDoorsHFormula}>
-                Use Door Formula
-              </button>
-            </div>
-            <div
-              style={{ marginTop: "8px", fontSize: "13px", color: "#374151" }}
-            >
-              {formData.doorType === "sliding" ? (
-                <>
-                  Sliding door rule:
-                  <br />
-                  Width &lt; 1200 → 1
-                  <br />
-                  Width 1200 to &lt; 2400 → 2
-                  <br />
-                  Width 2400 to 3600 → 3
-                </>
-              ) : (
-                <>
-                  Swing door rule:
-                  <br />
-                  Max single door width = 450 mm
-                  <br />
-                  Recommended Doors H = ceil(width / 450)
-                </>
-              )}
-              <br />
-              Current Recommended Doors H: <strong>{recommendedDoorsH}</strong>
-            </div>
-          </div>
-        </FieldRow>
+              >
+                <option value="swing">Swing Door</option>
+                <option value="sliding">Sliding Door</option>
+              </select>
+            </FieldRow>
 
-        <FieldRow
-          label={
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                fontWeight: "600",
-              }}
+            <FieldRow
+              label={
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    fontWeight: "600",
+                  }}
+                >
+                  <span>Doors H</span>
+                  <InfoHint text="Number of door pieces across width. Sliding: same formula as back parts. Swing: maximum leaf width 450 mm." />
+                </div>
+              }
             >
-              <span>Doors V</span>
-              <InfoHint text="Number of door pieces across height." />
-            </div>
-          }
-        >
-          <div>
-            <div
-              style={{ display: "flex", gap: "10px", alignItems: "center" }}
+              <div>
+                <div
+                  style={{ display: "flex", gap: "10px", alignItems: "center" }}
+                >
+                  <input
+                    type="number"
+                    name="doorsH"
+                    value={formData.doorsH}
+                    onChange={handleChange}
+                    style={{ flex: 1 }}
+                  />
+                  <button type="button" onClick={applyDoorsHFormula}>
+                    Use Door Formula
+                  </button>
+                </div>
+                <div
+                  style={{ marginTop: "8px", fontSize: "13px", color: "#374151" }}
+                >
+                  {formData.doorType === "sliding" ? (
+                    <>
+                      Sliding door rule:
+                      <br />
+                      Width &lt; 1200 → 1
+                      <br />
+                      Width 1200 to &lt; 2400 → 2
+                      <br />
+                      Width 2400 to 3600 → 3
+                    </>
+                  ) : (
+                    <>
+                      Swing door rule:
+                      <br />
+                      Max single door width = 450 mm
+                      <br />
+                      Recommended Doors H = ceil(width / 450)
+                    </>
+                  )}
+                  <br />
+                  Current Recommended Doors H: <strong>{recommendedDoorsH}</strong>
+                </div>
+              </div>
+            </FieldRow>
+
+            <FieldRow
+              label={
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    fontWeight: "600",
+                  }}
+                >
+                  <span>Doors V</span>
+                  <InfoHint text="Number of door pieces across height." />
+                </div>
+              }
             >
-              <input
-                type="number"
-                name="doorsV"
-                value={formData.doorsV}
-                onChange={handleChange}
-                style={{ flex: 1 }}
-              />
-              <button type="button" onClick={applyDoorsVFormula}>
-                Use Height Formula
-              </button>
-            </div>
-            <div
-              style={{ marginTop: "8px", fontSize: "13px", color: "#374151" }}
-            >
-              Recommended rule:
-              <br />
-              Height up to 2400 → 1
-              <br />
-              Height above 2400 → 2
-              <br />
-              Current Recommended Doors V: <strong>{recommendedDoorsV}</strong>
-            </div>
-          </div>
-        </FieldRow>
+              <div>
+                <div
+                  style={{ display: "flex", gap: "10px", alignItems: "center" }}
+                >
+                  <input
+                    type="number"
+                    name="doorsV"
+                    value={formData.doorsV}
+                    onChange={handleChange}
+                    style={{ flex: 1 }}
+                  />
+                  <button type="button" onClick={applyDoorsVFormula}>
+                    Use Height Formula
+                  </button>
+                </div>
+                <div
+                  style={{ marginTop: "8px", fontSize: "13px", color: "#374151" }}
+                >
+                  Recommended rule:
+                  <br />
+                  Height up to 2400 → 1
+                  <br />
+                  Height above 2400 → 2
+                  <br />
+                  Current Recommended Doors V: <strong>{recommendedDoorsV}</strong>
+                </div>
+              </div>
+            </FieldRow>
+          </>
+        )}
 
         <FieldRow
           label={
@@ -1401,47 +1411,49 @@ function WardrobeConfigurator() {
           />
         </FieldRow>
 
-        <FieldRow
-          label={
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                fontWeight: "600",
-              }}
-            >
-              <span>Front Frame</span>
-              <InfoHint text="Enable or disable front frame breakup pieces on the front side of the wardrobe." />
+        {hasDoors && (
+          <FieldRow
+            label={
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontWeight: "600",
+                }}
+              >
+                <span>Front Frame</span>
+                <InfoHint text="Enable or disable front frame breakup pieces on the front side of the unit." />
+              </div>
+            }
+          >
+            <div>
+              <div
+                style={{ display: "flex", gap: "10px", alignItems: "center" }}
+              >
+                <input
+                  type="number"
+                  name="frontFrame"
+                  value={formData.frontFrame}
+                  onChange={handleChange}
+                  style={{ flex: 1 }}
+                />
+                <button type="button" onClick={applyFrontFrameFormula}>
+                  Use Formula
+                </button>
+              </div>
+              <div
+                style={{ marginTop: "8px", fontSize: "13px", color: "#374151" }}
+              >
+                Rule:
+                <br />
+                0 = No Front Frame
+                <br />
+                1 = Add Front Frame
+              </div>
             </div>
-          }
-        >
-          <div>
-            <div
-              style={{ display: "flex", gap: "10px", alignItems: "center" }}
-            >
-              <input
-                type="number"
-                name="frontFrame"
-                value={formData.frontFrame}
-                onChange={handleChange}
-                style={{ flex: 1 }}
-              />
-              <button type="button" onClick={applyFrontFrameFormula}>
-                Use Formula
-              </button>
-            </div>
-            <div
-              style={{ marginTop: "8px", fontSize: "13px", color: "#374151" }}
-            >
-              Rule:
-              <br />
-              0 = No Front Frame
-              <br />
-              1 = Add Front Frame
-            </div>
-          </div>
-        </FieldRow>
+          </FieldRow>
+        )}
       </SectionCard>
 
       <SectionCard title="Hardware Breakdown">
@@ -1521,9 +1533,11 @@ function WardrobeConfigurator() {
           <button type="button" onClick={addHardwareRow}>
             Add Hardware Row
           </button>
-          <button type="button" onClick={applyHardwareTemplate}>
-            Apply {formData.doorType === "sliding" ? "Sliding" : "Swing"} Hardware Template
-          </button>
+          {hasDoors && (
+            <button type="button" onClick={applyHardwareTemplate}>
+              Apply {formData.doorType === "sliding" ? "Sliding" : "Swing"} Hardware Template
+            </button>
+          )}
           <button type="button" onClick={applyDrawerHardwareTemplate}>
             Apply Drawer Hardware Template
           </button>

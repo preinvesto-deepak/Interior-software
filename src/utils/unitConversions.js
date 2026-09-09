@@ -13,3 +13,10 @@ export function feetToMm(feet) {
 export function roundTo2(value) {
   return Number(value || 0).toFixed(2);
 }
+
+export function formatCurrency(amount) {
+  return "₹" + Number(amount || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}

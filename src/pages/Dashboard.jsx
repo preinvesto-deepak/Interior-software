@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useAppData } from "../context/AppDataContext";
+import { fetchState, saveState } from "../utils/api";
 
 function Dashboard() {
   const {
@@ -52,11 +53,60 @@ function Dashboard() {
     restoreSampleData();
   };
 
+  const handleExport = async () => {
+    try {
+      const data = await fetchState();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `interior-app-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Could not export backup: ${err.message}`);
+    }
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      let parsed;
+      try {
+        parsed = JSON.parse(ev.target.result);
+      } catch {
+        alert("Invalid backup file. Please select a valid export file.");
+        return;
+      }
+      try {
+        await saveState(parsed);
+        window.location.reload();
+      } catch (err) {
+        alert(`Could not import backup: ${err.message}`);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
   return (
     <div className="page-card">
-      <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center" }}>
         <button onClick={handleResetAllData}>Reset All App Data</button>
         <button onClick={handleRestoreSampleData}>Restore Sample Data</button>
+        <span style={{ width: 1, height: 28, background: "#d1d5db", display: "inline-block", margin: "0 4px" }} />
+        <button
+          onClick={handleExport}
+          style={{ background: "#1e3a5f", color: "#fff", border: "none", borderRadius: 8, padding: "7px 16px", fontWeight: 600, cursor: "pointer", fontSize: 13 }}
+        >
+          Export Backup
+        </button>
+        <label style={{ background: "#059669", color: "#fff", border: "none", borderRadius: 8, padding: "7px 16px", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>
+          Import Backup
+          <input type="file" accept=".json" onChange={handleImport} style={{ display: "none" }} />
+        </label>
       </div>
 
       <div
